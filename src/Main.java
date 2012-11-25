@@ -3,6 +3,7 @@ import java.awt.Graphics;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.util.ArrayList;
@@ -20,6 +21,7 @@ import javax.sound.sampled.SourceDataLine;
 import javax.sound.sampled.DataLine;
 import javax.sound.sampled.LineUnavailableException;
 import javax.sound.sampled.TargetDataLine;
+import javax.sound.sampled.UnsupportedAudioFileException;
 
 public class Main {
 
@@ -46,6 +48,7 @@ public class Main {
 			"Avicii - Silhouettes.mp3", "RITA ORA - Shine Ya Light.mp3" };
 	// static String somePathName = "whatYoureSmoking.wav";
 	static String somePathName = "RITA ORA -  Shine Your Light (Official Video)-cutmp3.net.mp3";
+	// static String somePathName = "pitbulRec.wav";
 	// Mp3Encoder mp3encoder = new Mp3Encoder();
 
 	static File fileIn = new File(somePathName);
@@ -79,6 +82,20 @@ public class Main {
 			// Start drawing window
 			main = new MinimumSize();
 			main.display();
+		}
+
+		// Init compare file
+		AudioInputStream compareFileInput = null;
+		try {
+			compareFileInput = AudioSystem.getAudioInputStream(fileIn);
+		} catch (UnsupportedAudioFileException e2) {
+			// TODO Auto-generated catch block
+			e2.printStackTrace();
+			System.exit(0);
+		} catch (IOException e2) {
+			// TODO Auto-generated catch block
+			e2.printStackTrace();
+			System.exit(0);
 		}
 
 		// Initialize audio capturing
@@ -133,8 +150,11 @@ public class Main {
 			try {
 				// AudioInputStream audioInputStream =
 				// Mp3Encoder.getInStream(somePathName);
-				AudioInputStream audioInputStream = AudioSystem
+				AudioInputStream fileStream = AudioSystem
 						.getAudioInputStream(new File(song));
+				AudioInputStream audioInputStream = AudioSystem
+						.getAudioInputStream(fileStream);
+				// .getAudioInputStream(getFormat(), fileStream);
 				int bytesPerFrame = audioInputStream.getFormat().getFrameSize();
 				System.out.println("bytesPerFrame: " + bytesPerFrame);
 				if (bytesPerFrame == AudioSystem.NOT_SPECIFIED) {
@@ -207,15 +227,132 @@ public class Main {
 			}
 		}
 
+		// Read input to compare! (file or mic)
+		readFileInput(linen, main, compareFileInput);
+
 		// Time matching process
 		long startTimeReadMatchSong = System.nanoTime();
+
+		int[] matches = new int[songs.size()];
+		int keyMatch = 0;
+
+		// Time matching process
+		long startTimeHash = System.nanoTime();
+		// Pattern matching!
+		Iterator<Entry<Long, List<DataPoint>>> it = HashPrim.entrySet()
+				.iterator();
+		while (it.hasNext()) {
+			Map.Entry pairs = (Map.Entry) it.next();
+			// System.out.println(pairs.getKey() + " = " + pairs.getValue());
+			Long key = (Long) pairs.getKey();
+			List<DataPoint> points = (List<DataPoint>) pairs.getValue();
+			List<DataPoint> dbPoints = HashDB.get(key);
+			if (HashDB.containsKey(key) == true) {
+				keyMatch++;
+				for (DataPoint dbPoint : dbPoints) {
+					for (DataPoint instancePoint : points) {
+						// if (dbPoint.getTime() == instancePoint.getTime()) {
+						matches[dbPoint.getSongId()]++;
+						// }
+					}
+				}
+			}
+			it.remove(); // avoids a ConcurrentModificationException
+		}
+		// matching time
+		long endTime = System.nanoTime();
+
+		long durationHash = endTime - startTimeHash;
+		long durationProgram = endTime - startTimeProgram;
+		long durationReadMatch = endTime - startTimeReadMatchSong;
+		System.out.println("Read + match: " + durationReadMatch / 1000 / 1000
+				+ " ms");
+		System.out.println("Matching (hash): " + durationHash / 1000 / 1000
+				+ " ms");
+		System.out.println("Program time: " + durationProgram / 1000 / 1000
+				+ " ms" + "(" + durationProgram / 1000 / 1000 / 1000 + "s)");
+
+		for (int i = 0; i < matches.length; i++) {
+			System.out.println(matches[i] + "\t" + songs.get(i));
+		}
+		System.out.println("Key matches: " + keyMatch);
+
+	} // main method
+
+	public static void readMicInput(AudioInputStream line, MinimumSize main) {
+
+		boolean running = true;
+
+		try {
+			while (running) {
+				// if (cas < 0) {
+				// break;
+				// }
+				int count = 0;
+				count = line.read(buffer, 0, buffer.length);
+				// audio = buffer;
+				// buffer = readAudioFile();
+				count = buffer.length;
+				System.out.println("Count: " + count);
+				if (count > 0) {
+					// count = 4410
+					final int totalSize = buffer.length;
+					// System.out.println("Total size: " + totalSize);
+					int amountPossible = totalSize / CHUNK_SIZE;
+					// System.out.println("Amount possible: " + amountPossible);
+					// When turning into frequency domain we'll need complex
+					// numbers:
+					results = new Complex[amountPossible][];
+
+					// For all the chunks:
+					for (int times = 0; times < amountPossible; times++) {
+						Complex[] complex = new Complex[CHUNK_SIZE];
+						for (int i = 0; i < CHUNK_SIZE; i++) {
+							// Put the time domain data into a complex number
+							// with imaginary part as 0:
+							complex[i] = new Complex(
+									buffer[(times * CHUNK_SIZE) + i], 0);
+						}
+						// Perform FFT analysis on the chunk:
+						results[times] = FFT.fft(complex);
+						System.out.println("Performing FFT...");
+					}
+					System.out.println("Results: " + results.length);
+					// Determine Key Points
+					// TODO amountPossible may not always be 0
+					// keyPoints(results[amountPossible - 1]);
+					keyPoints(results[amountPossible - 1],
+							new DataPoint(songs.indexOf(somePathName), cas),
+							HashPrim);
+
+					// Done!
+					if (draw) {
+						main.cc.paintLine(cas, results);
+					}
+
+				}
+				if (cas > 200) {
+					running = false;
+				}
+				cas++;
+
+			}
+			// out.close();
+		} catch (IOException e) {
+			System.err.println("I/O problems: " + e);
+			System.exit(-1);
+		}
+
+	}
+
+	public static void readFileInput(SourceDataLine linen, MinimumSize main,
+			AudioInputStream audioInputStream) {
 
 		// Read comparing mp3 file and compare / other database
 		try {
 			// AudioInputStream audioInputStream =
 			// Mp3Encoder.getInStream(somePathName);
-			AudioInputStream audioInputStream = AudioSystem
-					.getAudioInputStream(fileIn);
+
 			int bytesPerFrame = audioInputStream.getFormat().getFrameSize();
 			System.out.println("bytesPerFrame: " + bytesPerFrame);
 			if (bytesPerFrame == AudioSystem.NOT_SPECIFIED) {
@@ -226,7 +363,7 @@ public class Main {
 			}
 			// Set an arbitrary buffer size of 1024 frames.
 			int numBytes = 1024 * bytesPerFrame;
-			audioBytes = new byte[numBytes];
+			byte[] audioBytes = new byte[numBytes];
 			try {
 				int numBytesRead = 0;
 				int numFramesRead = 0;
@@ -256,16 +393,16 @@ public class Main {
 							// part as 0:
 							// Write all points to file / test
 							// fw.append(audioBytes[(times * CHUNK_SIZE) + i] +
-							// " ");
+							// // " ");
 							complex[i] = new Complex(
 									audioBytes[(times * CHUNK_SIZE) + i], 0);
 						}
 						// fw.append("\n");
+
 						// Perform FFT analysis on the chunk:
 						results[times] = FFT.fft(complex);
-					}
-					// Determine Key Points
-					// TODO amountPossible may not always be 0
+					} // Determine Key Points
+						// TODO amountPossible may not always be 0
 					keyPoints(results[amountPossible - 1],
 							new DataPoint(songs.indexOf(somePathName), cas),
 							HashPrim);
@@ -276,9 +413,9 @@ public class Main {
 					}
 
 					cas++;
+
 				}
-			} catch (Exception ex) {
-				// Handle the error...
+			} catch (Exception ex) { // Handle the error...
 				ex.printStackTrace();
 			}
 		} catch (Exception e) {
@@ -290,84 +427,7 @@ public class Main {
 		// int ff = HashPrim.get(Long.valueOf("17008405040")).get(0).getTime();
 		// System.out.println("Get hash: " + ff);
 
-		int[] matches = new int[songs.size()];
-		int keyMatch = 0;
-
-		// Time matching process
-		long startTime = System.nanoTime();
-		// Pattern matching!
-		Iterator<Entry<Long, List<DataPoint>>> it = HashPrim.entrySet()
-				.iterator();
-		while (it.hasNext()) {
-			Map.Entry pairs = (Map.Entry) it.next();
-			// System.out.println(pairs.getKey() + " = " + pairs.getValue());
-			Long key = (Long) pairs.getKey();
-			List<DataPoint> points = (List<DataPoint>) pairs.getValue();
-			List<DataPoint> dbPoints = HashDB.get(key);
-			if (HashDB.containsKey(key) == true) {
-				keyMatch++;
-				for (DataPoint dbPoint : dbPoints) {
-					for (DataPoint instancePoint : points) {
-						// if (dbPoint.getTime() == instancePoint.getTime()) {
-						matches[dbPoint.getSongId()]++;
-						// }
-					}
-				}
-			}
-			it.remove(); // avoids a ConcurrentModificationException
-		}
-		// matching time
-		long endTime = System.nanoTime();
-
-		long duration = endTime - startTime;
-		long durationProgram = endTime - startTimeProgram;
-		long durationReadMatch = endTime - startTimeReadMatchSong;
-		System.out.println("Read + match: " + durationReadMatch / 1000 / 1000
-				+ " ms");
-		System.out
-				.println("Matching (hash): " + duration / 1000 / 1000 + " ms");
-		System.out.println("Program time: " + durationProgram / 1000 / 1000
-				+ " ms" + "(" + durationProgram / 1000 / 1000 / 1000 + "s)");
-
-		for (int i = 0; i < matches.length; i++) {
-			System.out.println(matches[i] + "\t" + songs.get(i));
-		}
-		System.out.println("Key matches: " + keyMatch);
-
-		/*
-		 * try { while (running) { // if (cas < 0) { // break; // } int count =
-		 * 0; // count = line.read(buffer, 0, buffer.length); // audio = buffer;
-		 * buffer = readAudioFile(); count = buffer.length;
-		 * System.out.println("Count: " + count); if (count > 0) { // count =
-		 * 4410 final int totalSize = buffer.length;
-		 * System.out.println("Total size: " + totalSize); int amountPossible =
-		 * totalSize / CHUNK_SIZE; System.out.println("Amount possible: " +
-		 * amountPossible); // When turning into frequency domain we'll need
-		 * complex // numbers: results = new Complex[amountPossible][];
-		 * 
-		 * // For all the chunks: for (int times = 0; times < amountPossible;
-		 * times++) { Complex[] complex = new Complex[CHUNK_SIZE]; for (int i =
-		 * 0; i < CHUNK_SIZE; i++) { // Put the time domain data into a complex
-		 * number // with imaginary // part as 0: complex[i] = new Complex(
-		 * buffer[(times * CHUNK_SIZE) + i], 0); } // Perform FFT analysis on
-		 * the chunk: results[times] = FFT.fft(complex);
-		 * System.out.println("Performing FFT...");
-		 * 
-		 * } System.out.println("Results: " + results.length); // Determine Key
-		 * Points // TODO amountPossible may not always be 0
-		 * keyPoints(results[amountPossible - 1]);
-		 * 
-		 * // Done! main.cc.paintLine(cas, results);
-		 * 
-		 * } cas++;
-		 * 
-		 * if (stejCas && cas < 20 - 1) { cas++; } else { main.cc.reDraw(); //
-		 * main.cc.repaint(); //trying to get the oval to move left // 20 }
-		 * 
-		 * } out.close(); } catch (IOException e) {
-		 * System.err.println("I/O problems: " + e); System.exit(-1); }
-		 */
-	} // main method
+	}
 
 	// Play sound file (only .wav)
 	public static synchronized void playSound(final String url) {
